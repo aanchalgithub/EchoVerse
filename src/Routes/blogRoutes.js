@@ -28,6 +28,35 @@ async function handleRoute(req,res){
                 res.writeHead(405,{'Content-type' : 'text/plain'})
                 res.end('405 Method not Found')
             }
+            break;
+
+            case '/resend_otp' :
+                if(method === 'POST'){
+                    return blogController.resend_otp(req,res)
+                }else{
+                    res.writeHead(405,{'Content-Type' : 'text/plain'})
+                    res.end('405 Method not Found')
+                }
+                break;
+            
+                case '/forgotPassword':
+                    if(method === 'POST'){
+                        return blogController.forgotPassword(req,res)
+                    }
+                    else {
+                        res.writeHead(405,{'Content-Type' : 'text/plain'})
+                        res.end('405 Method not Found')
+                    }
+                    break;
+                
+                    case '/changePassword':
+                        if(method === 'POST'){
+                            return blogController.changePassword(req,res)
+                        }else{
+                            res.writeHead(405,{'Content-Type' : 'text/plain'})
+                            res.end('405 Method not Found')
+                        }
+                    break;
     }
 }      
 

@@ -5,6 +5,8 @@ const bcrypt = require('bcryptjs');
 const OtpModel = require('../Models/blogOTP')
 const nodemailer = require('nodemailer');
 const jwt = require("jsonwebtoken")
+const generateRandomOtp = require("../Utils/generateRandomOtp")
+const sendOTP = require('../Utils/sendOtp')
 
 
 async function signup(req, res) {
@@ -135,7 +137,194 @@ async function login(req,res){
     }
 }
 
-async function verify_otp(req,res){
+async function verify_otp(req, res) {
+    try {
+        const { email } = req.body;
+       
+        const emailSchema = Joi.object({
+            email: Joi.string()
+                .required().email({ minDomainSegments: 2 }),
+            otp: Joi.string()
+                .required().pattern(/\d{6}/)
+        });
+        const { error } = await emailSchema.validate(req.body);
+        if (error) {
+            res.writeHead(400, { 'Content-Type': 'text/plain' });
+            return res.end("Validation failed");
+        }
 
+        const user = await userModel.findOne({ email });
+        if (!user) {
+            res.writeHead(400, { 'Content-Type': 'text/plain' });
+            return res.end("Invalid Credentials");
+        }
+
+        const otp = await OtpModel.findOne({ userId: user._id });
+        console.log(otp);
+        if (!otp) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, message: 'Otp not found or OTP has expired.' }));
+        }
+        if (otp.otp !== req.body.otp) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, message: 'Invalid otp provided.' }));
+        }
+
+        const deletedOtp = await OtpModel.deleteOne({ _id: otp._id });
+        console.log('OTP verified and deleted:', deletedOtp._id);
+
+        await userModel.findOneAndUpdate({ email: user.email }, { $set: { isVerify: true } }, { new: true });
+
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end("Otp Verified successfully");
+
+    } catch (err) {
+        console.error(err);
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Internal Server Error');
+    }
 }
-module.exports = { signup , login,verify_otp}
+
+async function resend_otp(req,res){
+    const {email} = req.body
+    console.log(req.body);
+
+    const resendSchema = Joi.object({
+        email: Joi.string().required()
+    })
+
+    const {error} = await resendSchema.validate(req.body)
+    if(error){
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        return res.end("Validation failed");
+    }
+
+    const user = await userModel.findOne({email})
+    if(!user){
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        return res.end("Validation failed");
+    }
+
+    const existingOtp = await OtpModel.findOne({
+        userId: user._id,
+        isVerified : false,
+        isExpired: { $gte: Date.now() },
+      });
+
+      if(existingOtp){
+        await sendOTP(user.email, existingOtp.otp)
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: true, message: 'Otp resent successfully' }));
+        
+      }
+
+      await OtpModel.deleteMany({ userId: user._id });
+   
+      const newOtp = generateRandomOtp();
+
+      
+    const otp = new OtpModel({
+        userId: user._id,
+        otp: newOtp,
+        // isExpired : false ,
+        isVerified: false,
+      });
+
+      await otp.save();
+      await sendOTP(email, newOtp);
+
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, message: 'Otp sent successfully' }));
+}
+
+async function forgotPassword(req,res){
+    try {
+        const { email } = req.body;
+  
+      
+        const schema = Joi.object({
+            email: Joi.string().required().email({ minDomainSegments: 2 }),
+        });
+  
+        const { error } = await schema.validate(req.body);
+        if (error) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, message: 'Validation Error' }));
+        }
+  
+       
+        const user = await userModel.findOne({ email });
+        if (!user) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, message: 'User not found' }));
+        }
+  
+        
+        const temporaryPassword = Math.random().toString(36).slice(-8);
+  
+       
+        const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
+  
+        
+        await userModel.findByIdAndUpdate(user._id, { password: hashedPassword });
+  
+       
+        const transporter = nodemailer.createTransport({
+            host: 'smtp.gmail.com',
+            port: 587,
+            secure: false,
+            auth: {
+                user: 'vaanchal05@gmail.com',
+                pass: 'wxhe szef alcb tghv'
+            }
+        });
+  
+        const mailOptions = {
+            from: 'vaanchal05@gmail.com',
+            to: email,
+            subject: 'Your One-Time Password',
+            html: `<p>Your temporary password is: <strong>${temporaryPassword}</strong>. Please use this to login and change your password.</p>`
+        };
+  
+        await transporter.sendMail(mailOptions);
+  
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: true, message: 'Temporary send to your mail' }));
+    } catch (error) {
+        console.error("Error in forgot password:", error);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: true, message: 'Internal Server Error' }));
+    }
+  }
+
+async function changePassword(req, res) {
+        try {
+          const { userId, newPassword } = req.body;
+      
+          if (!userId || !newPassword) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, message: 'User-Id and password is required' }));
+          }
+      
+         
+          const updatedUser = await userModel.findOneAndUpdate({ email: userId }, { password: newPassword }, { new: true });
+      
+          if (!updatedUser) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, message: 'User not found' }));
+          }
+      
+          const hashedPassword = await bcrypt.hash(newPassword, 10);
+      
+          updatedUser.password = hashedPassword;
+          await updatedUser.save();
+      
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: true, message: 'Password Updated Successfully!..' }));
+        } catch (error) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, message: 'Internal server error' }));
+        }
+}
+
+module.exports = { signup , login,verify_otp,resend_otp,forgotPassword,changePassword}
